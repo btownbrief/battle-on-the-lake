@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0e2238">
+<title>BATTLE ON THE LAKE — naval guesswork on Lake Champlain</title>
+<meta name="description" content="Classic pencil-and-paper naval guesswork, Burlington style: hide a fleet of five Lake Champlain vessels, call your shots, and sink the other shore first. A Btown Games production from the BTown Brief.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="BATTLE ON THE LAKE — naval guesswork on Lake Champlain">
+<meta property="og:description" content="Hide the Ferry, the Schooner, the Cutter, the Sailboat and the Kayak — then sink the other shore first. Pass the phone, or take on the Harbormaster.">
+<meta property="og:url" content="https://play.btownbrief.com/battle-on-the-lake/">
+<meta property="og:image" content="https://play.btownbrief.com/battle-on-the-lake/icon-180.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://play.btownbrief.com/battle-on-the-lake/icon-180.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- Dusk scenery: Adirondack silhouette on the horizon -->
+  <svg id="mountains" viewBox="0 0 100 14" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 14 L0 9 L9 4.5 L16 8 L24 3 L33 8.5 L41 5.5 L50 9 L58 4 L66 8 L75 5 L84 8.5 L92 6 L100 9.5 L100 14 Z" fill="#0a1a2c"/>
+  </svg>
+
+  <!-- Title screen -->
+  <div id="menu" class="screen">
+    <div class="menu-inner">
+      <div id="logo" aria-label="Battle on the Lake">
+        <span class="l-battle"><i>B</i><i>A</i><i>T</i><i>T</i><i>L</i><i>E</i></span>
+        <span class="l-lake">ON THE LAKE</span>
+      </div>
+      <div id="tagline">Naval guesswork on Lake Champlain.<br>Hide your fleet — then sink theirs first.</div>
+      <div id="modes">
+        <button class="big-btn mode-big" data-mode="bot">⚓&nbsp; VS. THE HARBORMASTER</button>
+        <div class="mode-sub">the saltiest bot on the broad lake</div>
+        <button class="big-btn mode-pass" data-mode="pass">📱&nbsp; PASS &amp; PLAY</button>
+        <div class="mode-sub">two admirals, one phone</div>
+      </div>
+    </div>
+    <footer id="credit">
+      A Btown Games production · <a href="https://www.btownbrief.com" target="_blank" rel="noopener">Read the BTown Brief →</a>
+    </footer>
+  </div>
+
+  <!-- Fleet placement -->
+  <div id="place" class="screen hidden">
+    <header class="topbar">
+      <button id="placeDock" class="chip-btn" aria-label="Back to menu">⚓ DOCK</button>
+      <div id="placeWho" class="who-chip"></div>
+      <button class="mute-btn" aria-label="Toggle sound">🔊</button>
+    </header>
+    <div id="placeTitle">SET YOUR FLEET</div>
+    <div id="placeBoard">
+      <div id="placeCells" class="cells" aria-label="Your waters"></div>
+      <div id="placeShips" class="ships"></div>
+      <div id="ghost" class="hidden"></div>
+    </div>
+    <div id="fleetTray" aria-label="Vessels waiting to launch"></div>
+    <div id="placeHint">Drag each vessel onto your waters. Tap one to select it, then rotate.</div>
+    <div id="placeTools">
+      <button id="rotateBtn" class="tool-btn">↻ ROTATE</button>
+      <button id="scatterBtn" class="tool-btn">🎲 SCATTER FLEET</button>
+      <button id="readyBtn" class="big-btn" disabled>⚔️ TO BATTLE</button>
+    </div>
+  </div>
+
+  <!-- Pass-and-play blocker: nobody sees the other shore -->
+  <div id="handoff" class="screen hidden">
+    <div id="handoffArt" aria-hidden="true">🛟</div>
+    <div id="handoffTitle"></div>
+    <div id="handoffSub">No peeking at the other shore.</div>
+    <button id="handoffBtn" class="big-btn"></button>
+  </div>
+
+  <!-- Battle -->
+  <div id="battle" class="screen hidden">
+    <header class="topbar">
+      <button id="dockBtn" class="chip-btn" aria-label="Back to menu">⚓ DOCK</button>
+      <div id="tally" aria-live="polite"></div>
+      <button class="mute-btn" aria-label="Toggle sound">🔊</button>
+    </header>
+
+    <div id="turnbar"><span id="turnChip"></span></div>
+
+    <div id="enemyBlock">
+      <div id="enemyLabel" class="board-label"></div>
+      <div id="targetWrap">
+        <div id="corner"></div>
+        <div id="colLabels" aria-hidden="true"></div>
+        <div id="rowLabels" aria-hidden="true"></div>
+        <div id="targetBoard">
+          <div id="targetCells" class="cells" aria-label="Enemy waters"></div>
+          <div id="targetShips" class="ships"></div>
+          <div id="targetFx"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="statusLine" aria-live="polite"></div>
+
+    <div id="ownBlock">
+      <div id="ownLabel" class="board-label"></div>
+      <div id="ownBoard">
+        <div id="ownCells" class="cells" aria-label="Your fleet"></div>
+        <div id="ownShips" class="ships"></div>
+        <div id="ownShots"></div>
+      </div>
+    </div>
+
+    <button id="passBtn" class="big-btn hidden">🛟 HAND OVER THE PHONE</button>
+
+    <div id="resultbar" class="hidden">
+      <div id="resultText"></div>
+      <div id="resultBtns">
+        <button id="rematchBtn" class="big-btn">↻&nbsp; REMATCH</button>
+      </div>
+    </div>
+
+    <!-- Champ pops up to celebrate -->
+    <div id="champ" class="hidden" aria-hidden="true">
+      <div id="champBubble"></div>
+      <svg viewBox="0 0 100 110" id="champSvg">
+        <path d="M30 110 C32 78 36 62 56 48" stroke="#3fa860" stroke-width="24" stroke-linecap="round" fill="none"/>
+        <ellipse cx="60" cy="42" rx="19" ry="15.5" fill="#3fa860"/>
+        <ellipse cx="73" cy="45" rx="10.5" ry="8.5" fill="#3fa860"/>
+        <ellipse cx="72" cy="47" rx="9" ry="6" fill="#f3e9c8"/>
+        <circle cx="79.5" cy="42" r="1.5" fill="#2e8149"/>
+        <path d="M68 49 q4.5 3.5 9 1" stroke="#1d5c33" stroke-width="2" stroke-linecap="round" fill="none"/>
+        <ellipse cx="63" cy="37" rx="5.5" ry="6.2" fill="#fff"/>
+        <circle cx="64.8" cy="37.5" r="3" fill="#1d2733"/>
+        <circle cx="65.9" cy="36.2" r="1" fill="#fff"/>
+        <path d="M52 30 q3 -9 11 -4.5 l-6.5 6.5 Z" fill="#2a7d45"/>
+        <path d="M44 39 q0 -10 9 -8 l-4.5 9 Z" fill="#2a7d45"/>
+        <path d="M38 52 q-2 -10 7 -10 l-2.5 10 Z" fill="#2a7d45"/>
+      </svg>
+    </div>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
