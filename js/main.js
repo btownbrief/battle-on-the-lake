@@ -41,17 +41,34 @@ const champBubble = $('champBubble');
 const handoffTitle = $('handoffTitle');
 const handoffSub = $('handoffSub');
 const handoffBtn = $('handoffBtn');
+const targetSelectionEl = $('targetSelection');
+const fireBtn = $('fireBtn');
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ------------------------------------------------------------- copy desk */
 
 const VESSEL_UI = {
-  ferry: { emoji: '⛴️', label: 'FERRY' },
-  schooner: { emoji: '🚢', label: 'SCHOONER' },
-  cutter: { emoji: '🚤', label: 'CUTTER' },
-  sailboat: { emoji: '⛵', label: 'SAILBOAT' },
-  kayak: { emoji: '🛶', label: 'KAYAK' },
+  ferry: {
+    label: 'FERRY',
+    icon: '<svg class="vessel-icon" viewBox="0 0 64 28" aria-hidden="true" focusable="false"><path d="M4 17h56l-7 8H13z"/><path d="M14 8h34v9H14z"/><path class="icon-accent" d="M18 11h7v4h-7zm11 0h7v4h-7zm11 0h5v4h-5zM21 4h5v4h-5zm16 0h5v4h-5z"/></svg>',
+  },
+  schooner: {
+    label: 'SCHOONER',
+    icon: '<svg class="vessel-icon" viewBox="0 0 64 28" aria-hidden="true" focusable="false"><path d="M7 20h52l-8 6H16z"/><path d="M24 3h2v17h-2zm18 2h2v15h-2z"/><path class="icon-accent" d="M22 5 9 18h13zm6 0 12 13H28zm18 2 12 11H46z"/></svg>',
+  },
+  cutter: {
+    label: 'CUTTER',
+    icon: '<svg class="vessel-icon" viewBox="0 0 64 28" aria-hidden="true" focusable="false"><path d="M4 18h56l-9 8H13zM21 9h26l7 9H17z"/><path class="icon-accent" d="m27 18 7-9h7l-7 9z"/><path d="M35 4h3v5h-3z"/></svg>',
+  },
+  sailboat: {
+    label: 'SAILBOAT',
+    icon: '<svg class="vessel-icon" viewBox="0 0 64 28" aria-hidden="true" focusable="false"><path d="M31 2h2v20h-2z"/><path class="icon-accent" d="M29 4 13 20h16zm6 2 15 14H35z"/><path d="M13 21h39l-7 5H20z"/></svg>',
+  },
+  kayak: {
+    label: 'KAYAK',
+    icon: '<svg class="vessel-icon" viewBox="0 0 64 28" aria-hidden="true" focusable="false"><path d="M3 14C12 6 52 6 61 14 52 22 12 22 3 14Z"/><ellipse class="icon-accent" cx="32" cy="14" rx="9" ry="5"/><path d="m17 4 3-2 27 22-3 2z"/><path class="icon-accent" d="m13 2 9 2-4 5zm38 24-9-2 4-5z"/></svg>',
+  },
 };
 const VESSEL_SIZE = {};
 const VESSEL_NAME = {};
@@ -101,6 +118,7 @@ let passTimer = 0;
 let resultTimer = 0;
 let tally = { [P1]: 0, [P2]: 0 };
 let selected = null; // vessel id selected on the placement board
+let targetSelection = null;
 let handoffGo = null;
 
 function newSeed() {
@@ -128,7 +146,7 @@ function buildCells(el, tag, onTap) {
       cell.dataset.row = row;
       cell.dataset.col = col;
       if (onTap) {
-        cell.setAttribute('aria-label', `Fire at ${coordName(row, col)}`);
+        cell.setAttribute('aria-label', `Select target ${coordName(row, col)}`);
         cell.addEventListener('click', () => onTap(row, col));
       }
       el.appendChild(cell);
@@ -160,6 +178,7 @@ $('scatterBtn').addEventListener('click', scatterFleet);
 readyBtn.addEventListener('click', declareReady);
 $('rematchBtn').addEventListener('click', rematch);
 passBtn.addEventListener('click', handPhoneOver);
+fireBtn.addEventListener('click', fireSelectedTarget);
 handoffBtn.addEventListener('click', () => {
   const go = handoffGo;
   handoffGo = null;
@@ -187,6 +206,7 @@ function newRound() {
   state = createInitialState({ seed: newSeed() });
   busy = false;
   selected = null;
+  targetSelection = null;
   resultBar.classList.add('hidden');
   champEl.classList.add('hidden');
   passBtn.classList.add('hidden');
@@ -205,6 +225,7 @@ function backToDock() {
   cancelDrag();
   clearTimers();
   busy = false;
+  targetSelection = null;
   showScreen('menu');
 }
 
@@ -253,7 +274,7 @@ function renderPlace() {
     waiting++;
     const chip = document.createElement('button');
     chip.className = `tray-chip v-${v.id}`;
-    chip.innerHTML = `<span>${VESSEL_UI[v.id].emoji}</span><span>${VESSEL_UI[v.id].label}</span>` +
+    chip.innerHTML = `<span class="tray-icon">${VESSEL_UI[v.id].icon}</span><span>${VESSEL_UI[v.id].label}</span>` +
       `<span class="t-cells">${'<i></i>'.repeat(v.size)}</span>`;
     chip.addEventListener('pointerdown', (e) => startDrag(e, v.id, true));
     fleetTray.appendChild(chip);
@@ -280,7 +301,7 @@ function shipEl(vesselId, placement) {
   el.style.top = `${placement.row * 10}%`;
   el.style.width = `${(vertical ? 1 : size) * 10}%`;
   el.style.height = `${(vertical ? size : 1) * 10}%`;
-  el.innerHTML = `<span class="s-emoji">${VESSEL_UI[vesselId].emoji}</span>` +
+  el.innerHTML = `<span class="s-icon">${VESSEL_UI[vesselId].icon}</span>` +
     `<span class="s-label">${VESSEL_UI[vesselId].label}</span>`;
   return el;
 }
@@ -365,7 +386,7 @@ function onDragMove(e) {
   ghostEl.style.top = `${row * 10}%`;
   ghostEl.style.width = `${(vertical ? 1 : drag.size) * 10}%`;
   ghostEl.style.height = `${(vertical ? drag.size : 1) * 10}%`;
-  ghostEl.innerHTML = `<span class="s-emoji">${VESSEL_UI[drag.vesselId].emoji}</span>`;
+  ghostEl.innerHTML = `<span class="s-icon">${VESSEL_UI[drag.vesselId].icon}</span>`;
 }
 
 // Abandon an in-flight drag without dropping anything — used when the
@@ -478,6 +499,7 @@ function declareReady() {
 function beginTurn(player) {
   view = player;
   busy = false;
+  targetSelection = null;
   passBtn.classList.add('hidden');
   renderBattle();
   // Catch the new captain up on the shot just taken against them.
@@ -486,7 +508,7 @@ function beginTurn(player) {
     statusLine.textContent = `${CAPTAINS[opponent(view)]} fired ${coordName(last.row, last.col)} — ` +
       describeIncoming(last);
   } else {
-    statusLine.textContent = 'Your shot, Captain. Tap the enemy waters.';
+    statusLine.textContent = 'Tap a target to select it. Tap it again or press FIRE.';
   }
   showScreen('battle');
 }
@@ -519,6 +541,7 @@ function renderBattle() {
       cells[row * SIZE + col].className = result ?? '';
     }
   }
+  renderTargetSelection();
 
   // On game over, the fog lifts: show what was hiding out there.
   targetShips.innerHTML = '';
@@ -582,11 +605,54 @@ function renderTurnChip() {
   }
 }
 
+function renderTargetSelection() {
+  const status = getStatus(state);
+  const canFire = targetSelection !== null &&
+    !busy &&
+    status.phase === 'battle' &&
+    status.turn === view;
+  const selectedIndex = targetSelection
+    ? targetSelection.row * SIZE + targetSelection.col
+    : -1;
+
+  for (let i = 0; i < targetCells.children.length; i++) {
+    const cell = targetCells.children[i];
+    const isSelected = i === selectedIndex;
+    cell.classList.toggle('selected-target', isSelected);
+    cell.setAttribute('aria-pressed', String(isSelected));
+  }
+
+  targetSelectionEl.textContent = targetSelection
+    ? `TARGET ${coordName(targetSelection.row, targetSelection.col)}`
+    : 'SELECT A TARGET';
+  fireBtn.disabled = !canFire;
+}
+
 function onTargetTap(row, col) {
   const status = getStatus(state);
   if (busy || status.phase !== 'battle' || status.turn !== view) return;
   if (shotResult(state, view, row, col) !== null) return;
+  if (targetSelection?.row === row && targetSelection?.col === col) {
+    fireSelectedTarget();
+    return;
+  }
+  targetSelection = { row, col };
+  renderTargetSelection();
+  statusLine.textContent = `${coordName(row, col)} selected — tap again or press FIRE.`;
+}
+
+function fireSelectedTarget() {
+  if (!targetSelection) return;
+  const status = getStatus(state);
+  const { row, col } = targetSelection;
+  if (busy || status.phase !== 'battle' || status.turn !== view) return;
+  if (shotResult(state, view, row, col) !== null) {
+    targetSelection = null;
+    renderTargetSelection();
+    return;
+  }
   busy = true;
+  targetSelection = null;
   state = applyMove(state, { type: 'fire', row, col });
   const last = state.last;
 

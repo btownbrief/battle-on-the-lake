@@ -1,0 +1,14 @@
+{
+  "name": "Battle on the Lake",
+  "short_name": "Battle on the Lake",
+  "description": "Naval guesswork on Lake Champlain. A Btown Games production.",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0e2238",
+  "theme_color": "#0e2238",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

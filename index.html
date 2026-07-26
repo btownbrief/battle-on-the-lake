@@ -18,6 +18,7 @@
 <meta name="twitter:image" content="https://play.btownbrief.com/battle-on-the-lake/icon-180.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -44,7 +45,9 @@
       </div>
     </div>
     <footer id="credit">
-      A Btown Games production · <a href="https://www.btownbrief.com" target="_blank" rel="noopener">Read the BTown Brief →</a>
+      A Btown Games production ·
+      <a href="https://play.btownbrief.com/" target="_blank" rel="noopener">More games →</a>
+      · <a href="https://www.btownbrief.com" target="_blank" rel="noopener">Read the BTown Brief →</a>
     </footer>
   </div>
 
@@ -102,6 +105,11 @@
       </div>
     </div>
 
+    <div id="targetActions">
+      <div id="targetSelection" role="status" aria-live="polite">SELECT A TARGET</div>
+      <button id="fireBtn" class="big-btn" disabled>🔥 FIRE</button>
+    </div>
+
     <div id="statusLine" aria-live="polite"></div>
 
     <div id="ownBlock">
@@ -120,6 +128,11 @@
       <div id="resultBtns">
         <button id="rematchBtn" class="big-btn">↻&nbsp; REMATCH</button>
       </div>
+      <footer class="surface-credit">
+        A Btown Games production ·
+        <a href="https://play.btownbrief.com/" target="_blank" rel="noopener">More games →</a>
+        · <a href="https://www.btownbrief.com" target="_blank" rel="noopener">Read the BTown Brief →</a>
+      </footer>
     </div>
 
     <!-- Champ pops up to celebrate -->

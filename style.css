@@ -190,9 +190,11 @@ html, body {
   color: var(--cream-dim);
   font-size: 12px;
   padding-bottom: 4px;
+  text-align: center;
+  line-height: 1.5;
 }
 
-#credit a { color: var(--sun); text-decoration: none; font-weight: 700; }
+#credit a, .surface-credit a { color: var(--sun); text-decoration: none; font-weight: 700; }
 
 /* ---------------------------------------------------------------- topbar */
 
@@ -310,7 +312,28 @@ html, body {
   touch-action: none;
 }
 
-.ship .s-emoji { font-size: clamp(12px, 3.6vw, 19px); line-height: 1; }
+.ship .s-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(20px, 6vw, 34px);
+  flex: 0 1 auto;
+}
+
+.vessel-icon {
+  display: block;
+  width: 100%;
+  height: auto;
+  fill: currentColor;
+}
+
+.vessel-icon .icon-accent { fill: var(--sun); }
+.v-ferry .icon-accent { fill: #5f87a4; }
+.v-schooner .icon-accent { fill: var(--cream-dim); }
+.v-cutter .icon-accent { fill: var(--red); }
+.v-sailboat .icon-accent { fill: var(--cream); }
+.v-kayak .icon-accent { fill: var(--cream); }
+
 .ship .s-label {
   font-size: clamp(7px, 2vw, 10px);
   letter-spacing: 0.08em;
@@ -318,6 +341,7 @@ html, body {
 
 .ship.vertical .s-label { display: none; } /* no room to read sideways */
 .ship.vertical { flex-direction: column; }
+.ship.vertical .s-icon { transform: rotate(90deg); }
 
 .v-ferry { background: linear-gradient(180deg, #f8f2e0, #d9ccae); color: #24445f; }
 .v-schooner { background: linear-gradient(180deg, #a06b3e, #6b4226); color: #f6efdc; }
@@ -391,6 +415,11 @@ html, body {
   cursor: grab;
   touch-action: none;
   box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+}
+
+.tray-icon {
+  display: block;
+  width: 28px;
 }
 
 .tray-chip .t-cells { display: flex; gap: 2px; }
@@ -544,6 +573,20 @@ html, body {
 
 #targetBoard .cells > button:not(.miss):not(.hit):not(.sunk):active { background: rgba(242, 162, 74, 0.4); }
 
+#targetBoard .cells > .selected-target {
+  z-index: 2;
+  background: rgba(242, 162, 74, 0.34);
+  box-shadow: inset 0 0 0 3px var(--sun);
+}
+
+#targetBoard .cells > .selected-target::before {
+  content: '';
+  position: absolute;
+  inset: 27%;
+  border: 2px solid var(--cream);
+  border-radius: 50%;
+}
+
 #targetFx { position: absolute; inset: 0; pointer-events: none; }
 
 .fx {
@@ -560,6 +603,35 @@ html, body {
   0% { transform: scale(0.3); opacity: 0; }
   35% { transform: scale(1.25); opacity: 1; }
   100% { transform: scale(1); opacity: 0; }
+}
+
+#targetActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+#targetSelection {
+  display: grid;
+  place-items: center;
+  min-width: 126px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid rgba(246, 239, 220, 0.25);
+  border-radius: 999px;
+  background: rgba(10, 26, 44, 0.7);
+  color: var(--cream-dim);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+#fireBtn {
+  min-height: 48px;
+  padding: 10px 22px;
+  font-size: 16px;
 }
 
 #statusLine {
@@ -587,7 +659,7 @@ html, body {
 
 #ownBoard .cells > div { border-width: 0.5px; }
 #ownBoard .ship { border-width: 1px; box-shadow: none; }
-#ownBoard .s-emoji { font-size: clamp(8px, 2.2vw, 12px); }
+#ownBoard .s-icon { width: clamp(12px, 3.2vw, 18px); }
 #ownBoard .s-label { display: none; }
 
 #ownShots { position: absolute; inset: 0; pointer-events: none; }
@@ -655,6 +727,14 @@ html, body {
 #resultText.green-win { color: var(--green); }
 #resultText.gold-win { color: var(--gold); }
 #resultText.red-loss { color: var(--red); }
+
+.surface-credit {
+  max-width: 300px;
+  color: var(--cream-dim);
+  font-size: 10.5px;
+  line-height: 1.45;
+  text-align: center;
+}
 
 /* ---------------------------------------------------------------- Champ */
 
