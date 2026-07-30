@@ -11,9 +11,16 @@ import {
 } from './engine.js';
 import { chooseMove } from './bot.js';
 import { sound } from './audio.js';
+import { OnlineMatch, savedSession, clearSession, getName } from './rooms.js';
 
 const $ = (id) => document.getElementById(id);
-const screens = { menu: $('menu'), place: $('place'), handoff: $('handoff'), battle: $('battle') };
+const screens = {
+  menu: $('menu'),
+  place: $('place'),
+  onlineWait: $('onlineWait'),
+  handoff: $('handoff'),
+  battle: $('battle'),
+};
 const placeBoard = $('placeBoard');
 const placeCells = $('placeCells');
 const placeShips = $('placeShips');
@@ -43,6 +50,17 @@ const handoffSub = $('handoffSub');
 const handoffBtn = $('handoffBtn');
 const targetSelectionEl = $('targetSelection');
 const fireBtn = $('fireBtn');
+const onlinePanel = $('onlinePanel');
+const opTitle = $('opTitle');
+const opName = $('opName');
+const opCodeWrap = $('opCodeWrap');
+const opCode = $('opCode');
+const opError = $('opError');
+const lobbyEl = $('lobby');
+const lobbyCode = $('lobbyCode');
+const rejoinBtn = $('rejoinBtn');
+const onlineWaitTitle = $('onlineWaitTitle');
+const onlineWaitSub = $('onlineWaitSub');
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -109,7 +127,7 @@ const coordName = (row, col) => `${String.fromCharCode(65 + col)}${row + 1}`;
 
 /* ------------------------------------------------------------- game shell */
 
-let mode = 'bot'; // 'bot' | 'pass'
+let mode = 'bot'; // 'bot' | 'pass' | 'online'
 let state = null;
 let view = P1; // whose eyes the battle screen uses
 let busy = false;
@@ -120,6 +138,10 @@ let tally = { [P1]: 0, [P2]: 0 };
 let selected = null; // vessel id selected on the placement board
 let targetSelection = null;
 let handoffGo = null;
+let online = null; // { match, myPlayer } for this phone's fixed seat
+let pollErrors = 0;
+let leaveTimer = 0;
+let countedFinishedState = null;
 
 function newSeed() {
   return (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) | 0;
@@ -135,6 +157,7 @@ function clearTimers() {
   clearTimeout(botTimer);
   clearTimeout(passTimer);
   clearTimeout(resultTimer);
+  clearTimeout(leaveTimer);
 }
 
 /* ------------------------------------------------------------- build once */
@@ -173,6 +196,7 @@ document.querySelectorAll('[data-mode]').forEach((btn) => {
 });
 $('placeDock').addEventListener('click', backToDock);
 $('dockBtn').addEventListener('click', backToDock);
+$('onlineWaitDock').addEventListener('click', backToDock);
 $('rotateBtn').addEventListener('click', rotateSelected);
 $('scatterBtn').addEventListener('click', scatterFleet);
 readyBtn.addEventListener('click', declareReady);
@@ -196,6 +220,7 @@ document.querySelectorAll('.mute-btn').forEach((btn) => {
 
 function startMatch(chosen) {
   mode = chosen;
+  online = null;
   clearTimers();
   tally = { [P1]: 0, [P2]: 0 };
   newRound();
@@ -207,6 +232,7 @@ function newRound() {
   busy = false;
   selected = null;
   targetSelection = null;
+  countedFinishedState = null;
   resultBar.classList.add('hidden');
   champEl.classList.add('hidden');
   passBtn.classList.add('hidden');
@@ -221,16 +247,41 @@ function newRound() {
   }
 }
 
-function backToDock() {
+function backToDock(event) {
+  if (online) {
+    const btn = event?.currentTarget;
+    if (btn && btn.dataset.armed !== 'yes') {
+      resetDockButtons();
+      btn.dataset.armed = 'yes';
+      btn.textContent = 'TAP AGAIN TO LEAVE';
+      leaveTimer = setTimeout(resetDockButtons, 2600);
+      return;
+    }
+    const match = online.match;
+    online = null;
+    match.leave(); // fire and forget: leaving also stops polling and clears the saved seat
+  }
   cancelDrag();
   clearTimers();
+  resetDockButtons();
   busy = false;
   targetSelection = null;
+  mode = 'bot';
   showScreen('menu');
+  refreshRejoin();
 }
 
 function rematch() {
-  newRound();
+  if (online) onlineRematch();
+  else newRound();
+}
+
+function resetDockButtons() {
+  for (const id of ['placeDock', 'dockBtn', 'onlineWaitDock']) {
+    const btn = $(id);
+    btn.dataset.armed = '';
+    btn.textContent = '⚓ DOCK';
+  }
 }
 
 function handoff(titleHtml, btnLabel, go) {
@@ -251,9 +302,13 @@ function beginPlacement() {
 function renderPlace() {
   const player = getStatus(state).placing;
   if (player === null) return;
-  placeWho.innerHTML = mode === 'pass'
-    ? `<span style="color: var(--${COLORS[player]})">${CAPTAINS[player]}</span> · ${SHORES[player]}`
-    : `YOUR WATERS · ${SHORES[P1]}`;
+  if (mode === 'online') {
+    placeWho.textContent = `YOUR WATERS · ${SHORES[online.myPlayer]}`;
+  } else {
+    placeWho.innerHTML = mode === 'pass'
+      ? `<span style="color: var(--${COLORS[player]})">${CAPTAINS[player]}</span> · ${SHORES[player]}`
+      : `YOUR WATERS · ${SHORES[P1]}`;
+  }
 
   // Moored vessels
   placeShips.innerHTML = '';
@@ -276,6 +331,7 @@ function renderPlace() {
     chip.className = `tray-chip v-${v.id}`;
     chip.innerHTML = `<span class="tray-icon">${VESSEL_UI[v.id].icon}</span><span>${VESSEL_UI[v.id].label}</span>` +
       `<span class="t-cells">${'<i></i>'.repeat(v.size)}</span>`;
+    chip.disabled = busy;
     chip.addEventListener('pointerdown', (e) => startDrag(e, v.id, true));
     fleetTray.appendChild(chip);
   }
@@ -286,10 +342,14 @@ function renderPlace() {
     fleetTray.appendChild(done);
   }
 
-  readyBtn.disabled = !allPlaced(state, player);
-  placeHint.textContent = waiting > 0
-    ? 'Drag each vessel onto your waters — or scatter the fleet and shuffle from there.'
-    : 'Tap a vessel to select it · ↻ rotates · drag to move. Ready when you are.';
+  $('rotateBtn').disabled = busy;
+  $('scatterBtn').disabled = busy;
+  readyBtn.disabled = busy || !allPlaced(state, player);
+  placeHint.textContent = busy
+    ? 'Signaling your fleet position to the other shore…'
+    : waiting > 0
+      ? 'Drag each vessel onto your waters — or scatter the fleet and shuffle from there.'
+      : 'Tap a vessel to select it · ↻ rotates · drag to move. Ready when you are.';
 }
 
 function shipEl(vesselId, placement) {
@@ -311,9 +371,9 @@ function shipEl(vesselId, placement) {
 let drag = null;
 
 function startDrag(e, vesselId, fromTray) {
-  if (drag || getStatus(state).phase !== 'place') return;
-  e.preventDefault();
   const player = getStatus(state).placing;
+  if (drag || busy || player === null || !canActOnline(player)) return;
+  e.preventDefault();
   const size = VESSEL_SIZE[vesselId];
   const placement = fromTray ? null : state.players[player].fleet[vesselId];
   const dir = placement ? placement.dir : 'h';
@@ -422,6 +482,10 @@ function onDragEnd(e) {
     state = applyMove(state, { type: 'place', vessel: d.vesselId, row: d.row, col: d.col, dir: d.dir });
     selected = d.vesselId;
     sound.place();
+    if (online) {
+      publishOnlineMove();
+      return;
+    }
   }
   renderPlace();
 }
@@ -432,7 +496,7 @@ function clearPreview() {
 
 function rotateSelected() {
   const player = getStatus(state).placing;
-  if (player === null) return;
+  if (busy || player === null || !canActOnline(player)) return;
   const placement = selected && state.players[player].fleet[selected];
   if (!placement) {
     placeHint.textContent = 'Tap a moored vessel first, then rotate it.';
@@ -445,7 +509,8 @@ function rotateSelected() {
   if (canPlace(state, player, selected, row, col, dir)) {
     state = applyMove(state, { type: 'place', vessel: selected, row, col, dir });
     sound.place();
-    renderPlace();
+    if (online) publishOnlineMove();
+    else renderPlace();
   } else {
     placeBoard.classList.remove('shake');
     void placeBoard.offsetWidth;
@@ -455,19 +520,27 @@ function rotateSelected() {
 }
 
 function scatterFleet() {
-  if (getStatus(state).phase !== 'place') return;
+  const player = getStatus(state).placing;
+  if (busy || player === null || !canActOnline(player)) return;
   cancelDrag();
   state = applyMove(state, { type: 'scatter' });
   selected = null;
   sound.scatter();
-  renderPlace();
+  if (online) publishOnlineMove();
+  else renderPlace();
 }
 
 function declareReady() {
   const player = getStatus(state).placing;
-  if (player === null || !allPlaced(state, player)) return;
+  if (busy || player === null || !canActOnline(player) || !allPlaced(state, player)) return;
   cancelDrag();
   state = applyMove(state, { type: 'ready' });
+
+  if (mode === 'online') {
+    selected = null;
+    publishOnlineMove();
+    return;
+  }
 
   if (mode === 'bot') {
     // The Harbormaster sets its fleet through the same engine you did.
@@ -526,12 +599,17 @@ function renderBattle() {
   const status = getStatus(state);
   const enemy = opponent(view);
 
-  enemyLabel.textContent = mode === 'bot'
-    ? `ENEMY WATERS · THE HARBORMASTER`
-    : `ENEMY WATERS · ${CAPTAINS[enemy]}`;
-  ownLabel.textContent = mode === 'bot'
-    ? `YOUR FLEET · ${SHORES[P1]}`
-    : `YOUR FLEET · ${SHORES[view]}`;
+  if (mode === 'online') {
+    enemyLabel.textContent = `ENEMY WATERS · ${opponentName().toUpperCase()}`;
+    ownLabel.textContent = `YOUR FLEET · ${SHORES[view]}`;
+  } else {
+    enemyLabel.textContent = mode === 'bot'
+      ? 'ENEMY WATERS · THE HARBORMASTER'
+      : `ENEMY WATERS · ${CAPTAINS[enemy]}`;
+    ownLabel.textContent = mode === 'bot'
+      ? `YOUR FLEET · ${SHORES[P1]}`
+      : `YOUR FLEET · ${SHORES[view]}`;
+  }
 
   // Enemy waters: only what this shooter has learned.
   const cells = targetCells.children;
@@ -543,9 +621,11 @@ function renderBattle() {
   }
   renderTargetSelection();
 
-  // On game over, the fog lifts: show what was hiding out there.
+  // Local modes lift the fog after the game. Online never renders an
+  // opponent's unhit vessels, even though friendly-game state reaches both
+  // phones through the shared room.
   targetShips.innerHTML = '';
-  if (status.over) {
+  if (status.over && mode !== 'online') {
     const fleet = state.players[enemy].fleet;
     for (const v of VESSELS) {
       const el = shipEl(v.id, fleet[v.id]);
@@ -579,6 +659,17 @@ function renderBattle() {
 }
 
 function renderTally() {
+  if (mode === 'online') {
+    const mine = document.createElement('span');
+    mine.className = `t-${COLORS[online.myPlayer]}`;
+    mine.textContent = `YOU ${tally[online.myPlayer]}`;
+    const dash = document.createTextNode(' — ');
+    const theirs = document.createElement('span');
+    theirs.className = `t-${COLORS[opponent(online.myPlayer)]}`;
+    theirs.textContent = `${tally[opponent(online.myPlayer)]} ${opponentName().toUpperCase()}`;
+    tallyEl.replaceChildren(mine, dash, theirs);
+    return;
+  }
   const a = `<span class="t-green">${mode === 'bot' ? 'YOU' : 'GREEN'} ${tally[P1]}</span>`;
   const b = `<span class="t-gold">${tally[P2]} ${mode === 'bot' ? 'HARBORMASTER' : 'GOLD'}</span>`;
   tallyEl.innerHTML = `${a} — ${b}`;
@@ -599,6 +690,17 @@ function renderTurnChip() {
       turnChip.className = 'gold thinking';
       turnChip.textContent = 'THE HARBORMASTER IS TAKING AIM…';
     }
+  } else if (mode === 'online') {
+    if (status.turn === online.myPlayer) {
+      turnChip.className = COLORS[online.myPlayer];
+      turnChip.textContent = 'YOUR SHOT';
+    } else {
+      const opp = online.match.opponents()[0];
+      turnChip.className = `${COLORS[opponent(online.myPlayer)]} thinking`;
+      turnChip.textContent = opp?.away
+        ? `${opponentName().toUpperCase()} IS AWAY — HANG TIGHT…`
+        : `${opponentName().toUpperCase()} IS TAKING AIM…`;
+    }
   } else {
     turnChip.className = COLORS[view];
     turnChip.textContent = status.turn === view ? `${CAPTAINS[view]}'S SHOT` : 'SHOT AWAY — PASS THE PHONE';
@@ -610,7 +712,8 @@ function renderTargetSelection() {
   const canFire = targetSelection !== null &&
     !busy &&
     status.phase === 'battle' &&
-    status.turn === view;
+    status.turn === view &&
+    canActOnline(view);
   const selectedIndex = targetSelection
     ? targetSelection.row * SIZE + targetSelection.col
     : -1;
@@ -630,7 +733,7 @@ function renderTargetSelection() {
 
 function onTargetTap(row, col) {
   const status = getStatus(state);
-  if (busy || status.phase !== 'battle' || status.turn !== view) return;
+  if (busy || status.phase !== 'battle' || status.turn !== view || !canActOnline(view)) return;
   if (shotResult(state, view, row, col) !== null) return;
   if (targetSelection?.row === row && targetSelection?.col === col) {
     fireSelectedTarget();
@@ -645,7 +748,7 @@ function fireSelectedTarget() {
   if (!targetSelection) return;
   const status = getStatus(state);
   const { row, col } = targetSelection;
-  if (busy || status.phase !== 'battle' || status.turn !== view) return;
+  if (busy || status.phase !== 'battle' || status.turn !== view || !canActOnline(view)) return;
   if (shotResult(state, view, row, col) !== null) {
     targetSelection = null;
     renderTargetSelection();
@@ -663,8 +766,11 @@ function fireSelectedTarget() {
 
   if (getStatus(state).over) {
     finishGame();
+    if (online) publishOnlineMove();
   } else if (mode === 'bot') {
     botTimer = setTimeout(botTurn, reducedMotion ? 250 : 950);
+  } else if (mode === 'online') {
+    publishOnlineMove();
   } else {
     passTimer = setTimeout(() => passBtn.classList.remove('hidden'), 700);
   }
@@ -716,8 +822,12 @@ function splashSound(last) {
 
 function finishGame() {
   const winner = getStatus(state).winner;
-  tally[winner]++;
-  renderBattle(); // lifts the fog on the enemy fleet
+  const firstFinish = countedFinishedState !== state;
+  if (firstFinish) {
+    tally[winner]++;
+    countedFinishedState = state;
+  }
+  renderBattle();
 
   let text = '';
   let cls = '';
@@ -725,22 +835,41 @@ function finishGame() {
     if (winner === P1) {
       text = 'YOU SANK THE WHOLE FLEET!';
       cls = 'green-win';
-      sound.win();
-      celebrateChamp();
+      if (firstFinish) {
+        sound.win();
+        celebrateChamp();
+      }
     } else {
       text = 'THE HARBORMASTER RULES THE LAKE';
       cls = 'red-loss';
-      sound.lose();
+      if (firstFinish) sound.lose();
+    }
+  } else if (mode === 'online') {
+    const iWon = winner === online.myPlayer;
+    text = iWon
+      ? 'YOU SANK THE WHOLE FLEET!'
+      : `${opponentName().toUpperCase()} COMMANDS THE LAKE`;
+    cls = `${COLORS[winner]}-win`;
+    if (iWon) {
+      if (firstFinish) {
+        sound.win();
+        celebrateChamp();
+      }
+    } else {
+      if (firstFinish) sound.lose();
     }
   } else {
     text = `${CAPTAINS[winner]} COMMANDS THE LAKE!`;
     cls = `${COLORS[winner]}-win`;
-    sound.win();
-    celebrateChamp();
+    if (firstFinish) {
+      sound.win();
+      celebrateChamp();
+    }
   }
 
   resultText.textContent = text;
   resultText.className = cls;
+  clearTimeout(resultTimer);
   resultTimer = setTimeout(() => resultBar.classList.remove('hidden'), 900);
 }
 
@@ -750,3 +879,373 @@ function celebrateChamp() {
   void champEl.offsetWidth;
   champEl.classList.remove('hidden');
 }
+
+/* ------------------------------------------------------------- online play */
+// Two phones share the engine state through js/rooms.js. Seat 0 is the host
+// and maps to player 1, which is the side createInitialState() places and
+// fires first. The full state reaches both friendly-game phones, but this UI
+// only renders this phone's fleet and its legitimate view of enemy waters.
+
+const GAME = 'battle-on-the-lake';
+let panelIntent = 'host';
+
+$('hostBtn').addEventListener('click', () => openPanel('host'));
+$('joinBtn').addEventListener('click', () => openPanel('join'));
+$('opCancel').addEventListener('click', closePanel);
+$('opGo').addEventListener('click', onlineGo);
+$('lobbyCancel').addEventListener('click', cancelLobby);
+rejoinBtn.addEventListener('click', rejoinCrew);
+opCode.addEventListener('input', () => {
+  opCode.value = opCode.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+});
+[opName, opCode].forEach((el) => el.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') onlineGo();
+}));
+
+function openPanel(intent) {
+  panelIntent = intent;
+  opTitle.textContent = intent === 'host' ? 'START A CREW' : 'JOIN A CREW';
+  $('opGo').textContent = intent === 'host' ? 'GET A CODE' : 'CROSS THE LAKE';
+  opCodeWrap.classList.toggle('hidden', intent === 'host');
+  opError.classList.add('hidden');
+  opName.value = opName.value || getName();
+  onlinePanel.classList.remove('hidden');
+  (intent === 'join' && opName.value ? opCode : opName).focus();
+}
+
+function closePanel() {
+  onlinePanel.classList.add('hidden');
+}
+
+const FRIENDLY_ERRORS = {
+  not_found: 'No crew with that code — double-check the signal.',
+  room_full: 'That crew already set sail without you.',
+  room_started: 'That crew already set sail without you.',
+  not_ready: "Online play isn't switched on yet — check back soon!",
+  offline: "Can't reach the other shore — are you online?",
+};
+
+function friendly(err) {
+  if (err?.code === 'wrong_game') {
+    return `That code is for ${String(err.detail || 'another game').replace(/-/g, ' ')} — head there to use it.`;
+  }
+  return FRIENDLY_ERRORS[err?.code] || 'Choppy water — please try again.';
+}
+
+async function onlineGo() {
+  const name = opName.value.trim();
+  if (!name) {
+    opError.textContent = 'Every captain needs a name.';
+    opError.classList.remove('hidden');
+    opName.focus();
+    return;
+  }
+  const go = $('opGo');
+  go.disabled = true;
+  opError.classList.add('hidden');
+  try {
+    if (panelIntent === 'host') {
+      const match = await OnlineMatch.create({
+        game: GAME,
+        name,
+        state: createInitialState({ seed: newSeed() }),
+        seats: 2,
+      });
+      closePanel();
+      openLobby(match);
+    } else {
+      const code = opCode.value.trim();
+      if (code.length !== 4) {
+        opError.textContent = 'The crew code is 4 characters.';
+        opError.classList.remove('hidden');
+        opCode.focus();
+        return;
+      }
+      const match = await OnlineMatch.join({ game: GAME, code, name });
+      closePanel();
+      enterOnlineGame(match);
+    }
+  } catch (err) {
+    opError.textContent = friendly(err);
+    opError.classList.remove('hidden');
+  } finally {
+    go.disabled = false;
+  }
+}
+
+function openLobby(match) {
+  lobbyCode.textContent = match.code;
+  lobbyEl.classList.remove('hidden');
+  match.start({
+    onStatus: (status) => {
+      if (status === 'playing') {
+        lobbyEl.classList.add('hidden');
+        enterOnlineGame(match);
+      }
+    },
+    onError: () => {}, // a waiting-room hiccup can resolve on the next poll
+  });
+  lobbyEl._match = match;
+}
+
+function cancelLobby() {
+  const match = lobbyEl._match;
+  if (match) match.leave();
+  lobbyEl._match = null;
+  lobbyEl.classList.add('hidden');
+  refreshRejoin();
+}
+
+async function rejoinCrew() {
+  rejoinBtn.disabled = true;
+  try {
+    const match = await OnlineMatch.resume({ game: GAME });
+    if (match.status === 'waiting') openLobby(match);
+    else enterOnlineGame(match);
+  } catch {
+    clearSession(GAME);
+    refreshRejoin();
+  } finally {
+    rejoinBtn.disabled = false;
+  }
+}
+
+function refreshRejoin() {
+  const saved = savedSession(GAME);
+  rejoinBtn.classList.toggle('hidden', !saved);
+  if (saved) rejoinBtn.textContent = `↩ REJOIN YOUR CREW (${saved.code})`;
+}
+
+function enterOnlineGame(match) {
+  clearTimers();
+  resetDockButtons();
+  mode = 'online';
+  online = { match, myPlayer: match.seat === 0 ? P1 : P2 };
+  state = match.state;
+  view = online.myPlayer;
+  busy = false;
+  selected = null;
+  targetSelection = null;
+  pollErrors = 0;
+  tally = { [P1]: 0, [P2]: 0 };
+  countedFinishedState = null;
+  resultBar.classList.add('hidden');
+  champEl.classList.add('hidden');
+  passBtn.classList.add('hidden');
+  onlinePanel.classList.add('hidden');
+  lobbyEl.classList.add('hidden');
+  renderOnlineState();
+  match.start({
+    onState: onRemoteState,
+    onStatus: onRemoteStatus,
+    onPresence: onRemotePresence,
+    onError: onPollError,
+  });
+  if (match.status === 'over' && !getStatus(state).over) renderOnlineAbandoned();
+}
+
+function canActOnline(player) {
+  if (!online) return true;
+  return online.match.status === 'playing' &&
+    online.myPlayer === player &&
+    state.turn === player;
+}
+
+function opponentName() {
+  return online?.match.opponents()[0]?.name || 'THE OTHER CAPTAIN';
+}
+
+function renderOnlineState() {
+  if (!online) return;
+  const status = getStatus(state);
+  view = online.myPlayer;
+  passBtn.classList.add('hidden');
+
+  if (online.match.status === 'over' && !status.over) {
+    renderOnlineAbandoned();
+    return;
+  }
+
+  if (status.phase === 'place') {
+    targetSelection = null;
+    resultBar.classList.add('hidden');
+    champEl.classList.add('hidden');
+    if (status.placing === online.myPlayer) {
+      renderPlace();
+      showScreen('place');
+    } else {
+      renderOnlineWait();
+    }
+    return;
+  }
+
+  showScreen('battle');
+  if (status.over) {
+    $('rematchBtn').classList.remove('hidden');
+    finishGame();
+    return;
+  }
+
+  renderBattle();
+  resultBar.classList.add('hidden');
+  champEl.classList.add('hidden');
+  const last = status.last;
+  if (!last) {
+    statusLine.textContent = status.turn === online.myPlayer
+      ? 'Tap a target to select it. Tap it again or press FIRE.'
+      : `${opponentName()} has the first shot.`;
+  } else if (last.player === online.myPlayer) {
+    statusLine.textContent = `${coordName(last.row, last.col)} — ${describeOutgoing(last)}`;
+  } else {
+    statusLine.textContent = `${opponentName()} fired ${coordName(last.row, last.col)} — ${describeIncoming(last)}`;
+  }
+}
+
+function renderOnlineWait() {
+  cancelDrag();
+  selected = null;
+  onlineWaitTitle.textContent = `${opponentName().toUpperCase()} IS ANCHORING THEIR FLEET`;
+  const opp = online.match.opponents()[0];
+  onlineWaitSub.textContent = opp?.away
+    ? 'Their signal has gone quiet. Your fleet remains hidden while we wait.'
+    : 'Your waters stay private. Battle begins when the other shore is ready.';
+  showScreen('onlineWait');
+}
+
+function renderOnlineAbandoned() {
+  cancelDrag();
+  busy = false;
+  onlineWaitTitle.textContent = `${opponentName().toUpperCase()} LEFT THE LAKE`;
+  onlineWaitSub.textContent = 'This campaign is over. Head back to the dock to start another.';
+  showScreen('onlineWait');
+}
+
+function describeOutgoing(last) {
+  if (last.sunk) return SUNK_LINES[last.sunk];
+  if (last.result === 'hit') return 'HIT! Right in the hull.';
+  return 'a miss. Just lake.';
+}
+
+function onRemoteState(newState) {
+  // A cold repaint handles placement changes, shots, conflicts, resumes, and
+  // rematches without ever diffing or briefly exposing the opponent's fleet.
+  cancelDrag();
+  state = newState;
+  busy = false;
+  selected = null;
+  targetSelection = null;
+  if (!getStatus(state).over) countedFinishedState = null;
+  renderOnlineState();
+}
+
+function onRemoteStatus(status) {
+  if (status === 'over' && !getStatus(state).over) renderOnlineAbandoned();
+}
+
+function onRemotePresence(opponents) {
+  const opp = opponents[0];
+  const recovered = pollErrors > 0;
+  pollErrors = 0;
+  if (opp?.left) {
+    $('rematchBtn').classList.add('hidden');
+    if (!getStatus(state).over) renderOnlineAbandoned();
+    return;
+  }
+  if (recovered) {
+    renderOnlineState();
+  } else if (screens.onlineWait.classList.contains('hidden')) {
+    if (getStatus(state).phase === 'battle') renderTurnChip();
+  } else {
+    renderOnlineWait();
+  }
+}
+
+function onPollError(err) {
+  if (err?.code === 'not_found') {
+    online.match.stop();
+    clearSession(GAME);
+    online = null;
+    mode = 'bot';
+    showScreen('menu');
+    refreshRejoin();
+    return;
+  }
+  pollErrors++;
+  if (pollErrors < 3 || getStatus(state).over) return;
+  if (getStatus(state).phase === 'place') {
+    placeHint.textContent = 'Choppy connection — holding your fleet here until the signal returns…';
+  } else if (!screens.onlineWait.classList.contains('hidden')) {
+    onlineWaitSub.textContent = 'Choppy connection — holding this course until the signal returns…';
+  } else {
+    turnChip.className = 'thinking';
+    turnChip.textContent = 'CHOPPY CONNECTION — HANG TIGHT…';
+  }
+}
+
+function publishOnlineMove() {
+  if (!online) return;
+  const match = online.match;
+  const nextState = state;
+  busy = true;
+  renderOnlineState();
+
+  (async () => {
+    try {
+      await match.push(nextState, { over: getStatus(nextState).over });
+      pollErrors = 0;
+    } catch (err) {
+      if (err?.code === 'version_conflict') {
+        state = match.state;
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        if (!online || online.match !== match) return;
+        try {
+          await match.push(nextState, { over: getStatus(nextState).over });
+          pollErrors = 0;
+        } catch (retryErr) {
+          if (retryErr?.code === 'version_conflict') state = match.state;
+          else {
+            state = match.state;
+            onPollError(retryErr);
+          }
+        }
+      }
+    } finally {
+      if (online?.match === match) {
+        busy = false;
+        renderOnlineState();
+      }
+    }
+  })();
+}
+
+async function onlineRematch() {
+  if (!online) return;
+  const match = online.match;
+  const fresh = createInitialState({ seed: newSeed() });
+  state = fresh;
+  busy = true;
+  selected = null;
+  targetSelection = null;
+  countedFinishedState = null;
+  resultBar.classList.add('hidden');
+  champEl.classList.add('hidden');
+  renderOnlineState();
+  try {
+    await match.push(fresh, {});
+    pollErrors = 0;
+  } catch (err) {
+    if (err?.code === 'version_conflict') {
+      state = match.state;
+    } else {
+      onPollError(err);
+    }
+  } finally {
+    if (online?.match === match) {
+      busy = false;
+      renderOnlineState();
+    }
+  }
+}
+
+refreshRejoin();
