@@ -140,6 +140,10 @@
     </header>
 
     <div id="turnbar"><span id="turnChip"></span></div>
+    <div id="actionCue" class="hidden">
+      <span>Tap a square to fire on the Harbormaster's fleet</span>
+      <button id="dismissActionCue" aria-label="Dismiss this tip">×</button>
+    </div>
 
     <div id="enemyBlock">
       <div id="enemyLabel" class="board-label"></div>
@@ -150,9 +154,10 @@
         <div id="targetBoard">
           <div id="targetCells" class="cells" aria-label="Enemy waters"></div>
           <div id="targetShips" class="ships"></div>
-          <div id="targetFx"></div>
+          <div id="targetFx" aria-hidden="true"></div>
         </div>
       </div>
+      <div id="enemyRoster" class="fleet-roster" aria-label="Enemy fleet status"></div>
     </div>
 
     <div id="targetActions">
@@ -168,7 +173,9 @@
         <div id="ownCells" class="cells" aria-label="Your fleet"></div>
         <div id="ownShips" class="ships"></div>
         <div id="ownShots"></div>
+        <div id="ownFx" aria-hidden="true"></div>
       </div>
+      <div id="ownRoster" class="fleet-roster own-roster" aria-label="Your fleet damage"></div>
     </div>
 
     <button id="passBtn" class="big-btn hidden">🛟 HAND OVER THE PHONE</button>
@@ -203,6 +210,16 @@
         <path d="M38 52 q-2 -10 7 -10 l-2.5 10 Z" fill="#2a7d45"/>
       </svg>
     </div>
+
+    <!-- The Harbormaster answers a bot-mode loss from the opposite shore. -->
+    <div id="harbormaster" class="hidden" aria-hidden="true">
+      <div id="harbormasterBubble"></div>
+      <div id="harbormasterArt">⚓</div>
+    </div>
+
+    <div id="impactCallout" class="hidden" aria-hidden="true"></div>
+    <div id="sunkBanner" class="hidden" aria-hidden="true"></div>
+    <div id="streakChip" class="hidden" aria-hidden="true"></div>
   </div>
 </div>
 <script type="module" src="js/main.js"></script>
