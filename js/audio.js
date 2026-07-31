@@ -83,9 +83,12 @@ export const sound = {
   /** A vessel goes down: low foghorn. */
   sunk() {
     if (muted) return;
+    tone(105, 0, 0.24, { type: 'square', gain: 0.17, slide: -55 });
+    noise(0.01, 0.22, { gain: 0.12, freq: 520 });
     tone(98, 0, 0.7, { type: 'sawtooth', gain: 0.11, slide: -18 });
     tone(101, 0, 0.7, { type: 'sawtooth', gain: 0.11, slide: -18 });
     noise(0.12, 0.5, { gain: 0.08, freq: 420 });
+    tone(73, 0.24, 0.8, { type: 'triangle', gain: 0.14, slide: -10 });
   },
   win() {
     if (muted) return;

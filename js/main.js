@@ -35,6 +35,9 @@ const targetFx = $('targetFx');
 const ownCells = $('ownCells');
 const ownShips = $('ownShips');
 const ownShots = $('ownShots');
+const ownFx = $('ownFx');
+const enemyRoster = $('enemyRoster');
+const ownRoster = $('ownRoster');
 const turnChip = $('turnChip');
 const statusLine = $('statusLine');
 const tallyEl = $('tally');
@@ -45,6 +48,12 @@ const resultBar = $('resultbar');
 const resultText = $('resultText');
 const champEl = $('champ');
 const champBubble = $('champBubble');
+const harbormasterEl = $('harbormaster');
+const harbormasterBubble = $('harbormasterBubble');
+const impactCallout = $('impactCallout');
+const sunkBanner = $('sunkBanner');
+const streakChip = $('streakChip');
+const actionCue = $('actionCue');
 const handoffTitle = $('handoffTitle');
 const handoffSub = $('handoffSub');
 const handoffBtn = $('handoffBtn');
@@ -121,6 +130,14 @@ const CHAMP_LINES = [
   'ECHO, from the waterfront: nice shooting.',
   'Smoothest campaign since the ice went out.',
 ];
+const HARBORMASTER_LINES = [
+  'Good fight, Captain. The broad lake keeps the score.',
+  'Close one! I had the wind at my back.',
+  'Your fleet fought bravely. Mine brought the foghorn.',
+  'A fine campaign — but these waters know my name.',
+  'Back to the charts, Captain. I’ll keep the lantern lit.',
+];
+const ACTION_CUE_KEY = 'battle-on-the-lake-fire-cue-v1';
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const coordName = (row, col) => `${String.fromCharCode(65 + col)}${row + 1}`;
@@ -142,6 +159,16 @@ let online = null; // { match, myPlayer } for this phone's fixed seat
 let pollErrors = 0;
 let leaveTimer = 0;
 let countedFinishedState = null;
+let calloutTimer = 0;
+let sunkTimer = 0;
+let streakTimer = 0;
+let effectRunId = 0;
+let hitStreak = { [P1]: 0, [P2]: 0 };
+let confirmedShotKey = null;
+let harbormasterLosses = 0;
+let visibleSince = performance.now();
+const usedHarbormasterLines = new Set();
+const liveParticles = new Set();
 
 function newSeed() {
   return (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) | 0;
@@ -159,6 +186,38 @@ function clearTimers() {
   clearTimeout(resultTimer);
   clearTimeout(leaveTimer);
 }
+
+function clearBattleEffects() {
+  effectRunId++;
+  clearTimeout(calloutTimer);
+  clearTimeout(sunkTimer);
+  clearTimeout(streakTimer);
+  impactCallout.classList.add('hidden');
+  sunkBanner.classList.add('hidden');
+  streakChip.classList.add('hidden');
+  $('targetBoard').classList.remove('impact-nudge');
+  $('ownBoard').classList.remove('impact-nudge');
+  targetFx.querySelectorAll('.fx').forEach((fx) => fx.remove());
+  ownFx.querySelectorAll('.fx').forEach((fx) => fx.remove());
+  enemyRoster.querySelectorAll('.just-sunk').forEach((row) => row.classList.remove('just-sunk'));
+  ownRoster.querySelectorAll('.just-sunk').forEach((row) => row.classList.remove('just-sunk'));
+  for (const particle of liveParticles) particle.remove();
+  liveParticles.clear();
+}
+
+function resetPresentationState() {
+  clearBattleEffects();
+  hitStreak = { [P1]: 0, [P2]: 0 };
+  confirmedShotKey = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    clearBattleEffects();
+  } else {
+    visibleSince = performance.now();
+  }
+});
 
 /* ------------------------------------------------------------- build once */
 
@@ -203,6 +262,10 @@ readyBtn.addEventListener('click', declareReady);
 $('rematchBtn').addEventListener('click', rematch);
 passBtn.addEventListener('click', handPhoneOver);
 fireBtn.addEventListener('click', fireSelectedTarget);
+$('dismissActionCue').addEventListener('click', () => {
+  localStorage.setItem(ACTION_CUE_KEY, '1');
+  actionCue.classList.add('hidden');
+});
 handoffBtn.addEventListener('click', () => {
   const go = handoffGo;
   handoffGo = null;
@@ -228,6 +291,7 @@ function startMatch(chosen) {
 
 function newRound() {
   clearTimers();
+  resetPresentationState();
   state = createInitialState({ seed: newSeed() });
   busy = false;
   selected = null;
@@ -235,6 +299,7 @@ function newRound() {
   countedFinishedState = null;
   resultBar.classList.add('hidden');
   champEl.classList.add('hidden');
+  harbormasterEl.classList.add('hidden');
   passBtn.classList.add('hidden');
   if (mode === 'pass') {
     handoff(
@@ -263,6 +328,7 @@ function backToDock(event) {
   }
   cancelDrag();
   clearTimers();
+  resetPresentationState();
   resetDockButtons();
   busy = false;
   targetSelection = null;
@@ -285,6 +351,7 @@ function resetDockButtons() {
 }
 
 function handoff(titleHtml, btnLabel, go) {
+  clearBattleEffects();
   handoffTitle.innerHTML = titleHtml;
   handoffBtn.textContent = btnLabel;
   handoffGo = go;
@@ -654,8 +721,58 @@ function renderBattle() {
     ownShots.appendChild(mark);
   }
 
+  renderFleetRoster(enemyRoster, enemy, false);
+  renderFleetRoster(ownRoster, view, true);
+  updateActionCue(status);
   renderTally();
   renderTurnChip();
+}
+
+function renderFleetRoster(el, owner, showDamage) {
+  const attacker = opponent(owner);
+  const rows = [];
+  for (const vessel of VESSELS) {
+    const sunk = isSunk(state, attacker, vessel.id);
+    const row = document.createElement('div');
+    row.className = `fleet-row${sunk ? ' sunk' : ''}`;
+    row.dataset.vessel = vessel.id;
+
+    const name = document.createElement('span');
+    name.className = 'fleet-name';
+    name.textContent = VESSEL_UI[vessel.id].label;
+    const condition = document.createElement('span');
+    condition.className = 'fleet-condition';
+
+    if (showDamage) {
+      let damage = 0;
+      for (const [key, result] of Object.entries(state.players[attacker].shots)) {
+        if (result !== 'hit') continue;
+        const [rowNumber, colNumber] = key.split(',').map(Number);
+        if (vesselAt(state, owner, rowNumber, colNumber) === vessel.id) damage++;
+      }
+      condition.textContent = '▮'.repeat(damage) + '▯'.repeat(vessel.size - damage);
+      row.setAttribute(
+        'aria-label',
+        `${VESSEL_NAME[vessel.id]}, ${damage} of ${vessel.size} damage${sunk ? ', sunk' : ''}`
+      );
+    } else {
+      condition.textContent = sunk ? 'SUNK' : 'AFLOAT';
+      row.setAttribute('aria-label', `${VESSEL_NAME[vessel.id]}, ${sunk ? 'sunk' : 'afloat'}`);
+    }
+
+    row.append(name, condition);
+    rows.push(row);
+  }
+  el.replaceChildren(...rows);
+}
+
+function updateActionCue(status) {
+  const show = mode === 'bot' &&
+    status.phase === 'battle' &&
+    !status.over &&
+    status.turn === view &&
+    localStorage.getItem(ACTION_CUE_KEY) !== '1';
+  actionCue.classList.toggle('hidden', !show);
 }
 
 function renderTally() {
@@ -759,14 +876,14 @@ function fireSelectedTarget() {
   state = applyMove(state, { type: 'fire', row, col });
   const last = state.last;
 
-  splash(targetFx, row, col, last);
   renderBattle();
+  if (mode !== 'online') presentShot(last);
   statusLine.textContent = `${coordName(row, col)} — ` +
     (last.sunk ? SUNK_LINES[last.sunk] : last.result === 'hit' ? pick(HIT_LINES) : pick(MISS_LINES));
 
   if (getStatus(state).over) {
-    finishGame();
     if (online) publishOnlineMove();
+    else finishGame();
   } else if (mode === 'bot') {
     botTimer = setTimeout(botTurn, reducedMotion ? 250 : 950);
   } else if (mode === 'online') {
@@ -780,7 +897,7 @@ function botTurn() {
   state = applyMove(state, chooseMove(state));
   const last = state.last;
   renderBattle();
-  splash(ownShots, last.row, last.col, last);
+  presentShot(last);
   statusLine.textContent = `The Harbormaster fires ${coordName(last.row, last.col)} — ` + describeIncoming(last);
   if (getStatus(state).over) {
     finishGame();
@@ -801,7 +918,6 @@ function handPhoneOver() {
 }
 
 function splash(layer, row, col, last) {
-  splashSound(last);
   if (reducedMotion) return;
   const fx = document.createElement('div');
   fx.className = 'fx';
@@ -810,6 +926,127 @@ function splash(layer, row, col, last) {
   fx.textContent = last.sunk ? '🔥' : last.result === 'hit' ? '💥' : '💦';
   layer.appendChild(fx);
   setTimeout(() => fx.remove(), 600);
+}
+
+function presentShot(last) {
+  const incoming = last.player !== view;
+  const layer = incoming ? ownFx : targetFx;
+  const board = incoming ? $('ownBoard') : $('targetBoard');
+
+  splashSound(last);
+  if (last.result === 'miss') {
+    hitStreak[last.player] = 0;
+    streakChip.classList.add('hidden');
+    splash(layer, last.row, last.col, last);
+    return;
+  }
+
+  hitStreak[last.player]++;
+  if (!last.sunk) showHitCallout(incoming ? '💥 YOU GOT HIT!' : '💥 HIT!');
+  showImpactBurst(layer, last.row, last.col, Boolean(last.sunk));
+  nudgeBoard(board);
+  showHitStreak(last.player);
+
+  if (last.sunk) {
+    showSunkBanner(last, incoming);
+    animateSunkRoster(last, incoming);
+  }
+}
+
+function showHitCallout(text) {
+  const run = effectRunId;
+  clearTimeout(calloutTimer);
+  impactCallout.textContent = text;
+  impactCallout.classList.add('hidden');
+  void impactCallout.offsetWidth;
+  impactCallout.classList.remove('hidden');
+  calloutTimer = setTimeout(() => {
+    if (run === effectRunId) impactCallout.classList.add('hidden');
+  }, 690);
+}
+
+function showSunkBanner(last, incoming) {
+  const run = effectRunId;
+  const [headline, ...flavorParts] = SUNK_LINES[last.sunk].split('!');
+  const heading = incoming ? headline.replace(/^THE /, 'YOUR ') : headline;
+  clearTimeout(sunkTimer);
+  sunkBanner.replaceChildren();
+  const strong = document.createElement('strong');
+  strong.textContent = `🔥 ${heading}!`;
+  const flavor = document.createElement('span');
+  flavor.textContent = flavorParts.join('!').trim();
+  sunkBanner.append(strong, flavor);
+  sunkBanner.classList.add('hidden');
+  void sunkBanner.offsetWidth;
+  sunkBanner.classList.remove('hidden');
+  sunkTimer = setTimeout(() => {
+    if (run === effectRunId) sunkBanner.classList.add('hidden');
+  }, 1480);
+}
+
+function showHitStreak(player) {
+  const count = hitStreak[player];
+  if (count < 2) return;
+  const run = effectRunId;
+  clearTimeout(streakTimer);
+  streakChip.textContent = count >= 3
+    ? `🎯 ${count} HITS — ON A ROLL!`
+    : '🎯 2 IN A ROW!';
+  streakChip.classList.add('hidden');
+  void streakChip.offsetWidth;
+  streakChip.classList.remove('hidden');
+  streakTimer = setTimeout(() => {
+    if (run === effectRunId) streakChip.classList.add('hidden');
+  }, 920);
+}
+
+function showImpactBurst(layer, row, col, sunk) {
+  if (reducedMotion) return;
+  const count = sunk ? 28 : 12;
+  for (let i = 0; i < count; i++) {
+    while (liveParticles.size >= 40) {
+      const oldest = liveParticles.values().next().value;
+      oldest.remove();
+      liveParticles.delete(oldest);
+    }
+    const particle = document.createElement('i');
+    const kind = sunk
+      ? (i % 4 === 0 ? 'smoke' : i % 3 === 0 ? 'water' : 'fire')
+      : (i % 3 === 0 ? 'fire' : 'water');
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.35;
+    const distance = (sunk ? 34 : 22) + Math.random() * (sunk ? 48 : 28);
+    particle.className = `impact-particle ${kind}`;
+    particle.style.left = `${(col + 0.5) * 10}%`;
+    particle.style.top = `${(row + 0.5) * 10}%`;
+    particle.style.setProperty('--particle-x', `${Math.cos(angle) * distance}px`);
+    particle.style.setProperty('--particle-y', `${Math.sin(angle) * distance}px`);
+    particle.style.setProperty('--particle-size', `${4 + Math.random() * (sunk ? 8 : 5)}px`);
+    particle.style.setProperty('--particle-delay', `${Math.random() * 65}ms`);
+    particle.style.setProperty('--particle-time', `${480 + Math.random() * 260}ms`);
+    layer.appendChild(particle);
+    liveParticles.add(particle);
+    setTimeout(() => {
+      particle.remove();
+      liveParticles.delete(particle);
+    }, 850);
+  }
+}
+
+function nudgeBoard(board) {
+  if (reducedMotion) return;
+  board.classList.remove('impact-nudge');
+  void board.offsetWidth;
+  board.classList.add('impact-nudge');
+  setTimeout(() => board.classList.remove('impact-nudge'), 260);
+}
+
+function animateSunkRoster(last, incoming) {
+  const roster = incoming ? ownRoster : enemyRoster;
+  const row = roster.querySelector(`[data-vessel="${last.sunk}"]`);
+  if (!row) return;
+  row.classList.remove('just-sunk');
+  void row.offsetWidth;
+  row.classList.add('just-sunk');
 }
 
 function splashSound(last) {
@@ -822,10 +1059,11 @@ function splashSound(last) {
 
 function finishGame() {
   const winner = getStatus(state).winner;
-  const firstFinish = countedFinishedState !== state;
+  const finishKey = shotTransitionKey(state);
+  const firstFinish = countedFinishedState !== finishKey;
   if (firstFinish) {
     tally[winner]++;
-    countedFinishedState = state;
+    countedFinishedState = finishKey;
   }
   renderBattle();
 
@@ -837,12 +1075,17 @@ function finishGame() {
       cls = 'green-win';
       if (firstFinish) {
         sound.win();
+        harbormasterEl.classList.add('hidden');
         celebrateChamp();
       }
     } else {
       text = 'THE HARBORMASTER RULES THE LAKE';
       cls = 'red-loss';
-      if (firstFinish) sound.lose();
+      if (firstFinish) {
+        sound.lose();
+        champEl.classList.add('hidden');
+        celebrateHarbormaster();
+      }
     }
   } else if (mode === 'online') {
     const iWon = winner === online.myPlayer;
@@ -878,6 +1121,19 @@ function celebrateChamp() {
   champEl.classList.add('hidden');
   void champEl.offsetWidth;
   champEl.classList.remove('hidden');
+}
+
+function celebrateHarbormaster() {
+  harbormasterLosses++;
+  const choices = HARBORMASTER_LINES.filter((line) => !usedHarbormasterLines.has(line));
+  const line = choices.length
+    ? pick(choices)
+    : `Campaign ${harbormasterLosses} for the logbook — still no hard feelings, Captain.`;
+  usedHarbormasterLines.add(line);
+  harbormasterBubble.textContent = line;
+  harbormasterEl.classList.add('hidden');
+  void harbormasterEl.offsetWidth;
+  harbormasterEl.classList.remove('hidden');
 }
 
 /* ------------------------------------------------------------- online play */
@@ -1024,6 +1280,7 @@ function refreshRejoin() {
 
 function enterOnlineGame(match) {
   clearTimers();
+  resetPresentationState();
   resetDockButtons();
   mode = 'online';
   online = { match, myPlayer: match.seat === 0 ? P1 : P2 };
@@ -1034,9 +1291,11 @@ function enterOnlineGame(match) {
   targetSelection = null;
   pollErrors = 0;
   tally = { [P1]: 0, [P2]: 0 };
-  countedFinishedState = null;
+  countedFinishedState = getStatus(state).over ? shotTransitionKey(state) : null;
+  confirmedShotKey = shotTransitionKey(state);
   resultBar.classList.add('hidden');
   champEl.classList.add('hidden');
+  harbormasterEl.classList.add('hidden');
   passBtn.classList.add('hidden');
   onlinePanel.classList.add('hidden');
   lobbyEl.classList.add('hidden');
@@ -1132,16 +1391,66 @@ function describeOutgoing(last) {
   return 'a miss. Just lake.';
 }
 
+function shotCount(currentState) {
+  return Object.keys(currentState.players[P1].shots).length +
+    Object.keys(currentState.players[P2].shots).length;
+}
+
+function shotTransitionKey(currentState) {
+  const last = currentState?.last;
+  if (!last) return null;
+  return [
+    shotCount(currentState),
+    last.player,
+    last.row,
+    last.col,
+    last.result,
+    last.sunk || '',
+    last.win ? 1 : 0,
+  ].join(':');
+}
+
+function confirmOnlineShot(confirmedState, allowEffect) {
+  const key = shotTransitionKey(confirmedState);
+  if (!key || key === confirmedShotKey) return false;
+  confirmedShotKey = key;
+  if (!allowEffect || confirmedState.phase === 'place') {
+    hitStreak = { [P1]: 0, [P2]: 0 };
+    streakChip.classList.add('hidden');
+    return false;
+  }
+  presentShot(confirmedState.last);
+  return true;
+}
+
 function onRemoteState(newState) {
-  // A cold repaint handles placement changes, shots, conflicts, resumes, and
-  // rematches without ever diffing or briefly exposing the opponent's fleet.
+  // Only a single, visible, newly confirmed shot gets effects. Reconnect
+  // jumps, tab-hidden updates, hydration, and ordinary rerenders stay quiet.
+  const previousState = state;
+  const previousKey = shotTransitionKey(previousState);
+  const nextKey = shotTransitionKey(newState);
+  const oneNewShot = previousState &&
+    previousState.phase === 'battle' &&
+    shotCount(newState) === shotCount(previousState) + 1;
+  const confirmsOurOptimisticShot = busy &&
+    nextKey &&
+    nextKey === previousKey &&
+    newState.last.player === online.myPlayer;
+  const allowEffect = pollErrors === 0 &&
+    document.visibilityState === 'visible' &&
+    performance.now() - visibleSince > 1000 &&
+    !screens.battle.classList.contains('hidden') &&
+    (oneNewShot || confirmsOurOptimisticShot);
+
   cancelDrag();
+  if (newState.phase === 'place') resetPresentationState();
   state = newState;
   busy = false;
   selected = null;
   targetSelection = null;
   if (!getStatus(state).over) countedFinishedState = null;
   renderOnlineState();
+  confirmOnlineShot(newState, allowEffect);
 }
 
 function onRemoteStatus(status) {
@@ -1192,13 +1501,17 @@ function publishOnlineMove() {
   if (!online) return;
   const match = online.match;
   const nextState = state;
+  const moveEndsGame = getStatus(nextState).over;
+  let confirmed = false;
   busy = true;
-  renderOnlineState();
+  if (moveEndsGame) renderBattle();
+  else renderOnlineState();
 
   (async () => {
     try {
       await match.push(nextState, { over: getStatus(nextState).over });
       pollErrors = 0;
+      confirmed = true;
     } catch (err) {
       if (err?.code === 'version_conflict') {
         state = match.state;
@@ -1208,6 +1521,7 @@ function publishOnlineMove() {
         try {
           await match.push(nextState, { over: getStatus(nextState).over });
           pollErrors = 0;
+          confirmed = true;
         } catch (retryErr) {
           if (retryErr?.code === 'version_conflict') state = match.state;
           else {
@@ -1220,6 +1534,17 @@ function publishOnlineMove() {
       if (online?.match === match) {
         busy = false;
         renderOnlineState();
+        if (confirmed) {
+          const allowEffect = document.visibilityState === 'visible' &&
+            performance.now() - visibleSince > 1000;
+          const presented = confirmOnlineShot(nextState, allowEffect);
+          if (allowEffect &&
+              !presented &&
+              nextState.last?.sunk &&
+              confirmedShotKey === shotTransitionKey(nextState)) {
+            animateSunkRoster(nextState.last, nextState.last.player !== view);
+          }
+        }
       }
     }
   })();
@@ -1229,6 +1554,7 @@ async function onlineRematch() {
   if (!online) return;
   const match = online.match;
   const fresh = createInitialState({ seed: newSeed() });
+  resetPresentationState();
   state = fresh;
   busy = true;
   selected = null;
@@ -1236,6 +1562,7 @@ async function onlineRematch() {
   countedFinishedState = null;
   resultBar.classList.add('hidden');
   champEl.classList.add('hidden');
+  harbormasterEl.classList.add('hidden');
   renderOnlineState();
   try {
     await match.push(fresh, {});
