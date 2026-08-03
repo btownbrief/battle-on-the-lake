@@ -12,6 +12,11 @@ import {
 import { chooseMove } from './bot.js';
 import { sound } from './audio.js';
 import { OnlineMatch, savedSession, clearSession, getName } from './rooms.js';
+// Aliased: rooms.js also exports getName; both read the same localStorage keys.
+import {
+  lbEnabled, fetchTop, submitScore, renamePlayer, monthLabel,
+  getName as lbGetName, playerId as lbPlayerId,
+} from './leaderboard.js';
 
 const $ = (id) => document.getElementById(id);
 const screens = {
@@ -1114,7 +1119,123 @@ function finishGame() {
   resultText.className = cls;
   clearTimeout(resultTimer);
   resultTimer = setTimeout(() => resultBar.classList.remove('hidden'), 900);
+
+  // Monthly leaderboard: submit only the first time a vs-bot win finishes;
+  // otherwise (bot-mode loss) show the standings read-only. Pass-and-play
+  // and online results never show the panel at all.
+  const lbScore = mode === 'bot' && winner === P1 && firstFinish
+    ? BOARD_CELLS + 1 - Object.keys(state.players[P1].shots).length
+    : null;
+  updateLeaderboard(lbScore);
 }
+
+/* ---------------------------------------------------- monthly leaderboard */
+// Fewer shots = better. The fleet covers FLEET_CELLS of the board's
+// BOARD_CELLS squares, so a winning game takes 17..100 shots and
+// score = (BOARD_CELLS + 1) - shots fired lands in 1..84 (perfect game = 84,
+// higher is better, which is what the leaderboard server expects).
+
+const BOARD_CELLS = SIZE * SIZE;
+const FLEET_CELLS = VESSELS.reduce((sum, v) => sum + v.size, 0); // 17
+
+const lbBox = $('lb'), lbList = $('lbList'), lbStatus = $('lbStatus');
+const lbForm = $('lbForm'), lbNameInput = $('lbNameInput');
+const lbThisBtn = $('lbThisBtn'), lbLastBtn = $('lbLastBtn'), lbRenameBtn = $('lbRenameBtn');
+let lbMonthOffset = 0;
+
+if (lbEnabled()) {
+  lbThisBtn.textContent = `🏆 ${monthLabel(0)}`;
+  lbLastBtn.textContent = monthLabel(-1);
+}
+
+// score is a number on a first-time vs-bot win, null for the read-only view.
+function updateLeaderboard(score) {
+  if (!lbEnabled() || mode !== 'bot') {
+    lbBox.classList.add('hidden');
+    return;
+  }
+  lbBox.classList.remove('hidden');
+  if (score !== null && !lbGetName()) {
+    // First win without a saved name: hold the score until they pick one.
+    lbForm.dataset.pendingScore = String(score);
+    lbForm.classList.remove('hidden');
+    lbRenameBtn.classList.add('hidden');
+    lbStatus.textContent = 'Pick a name to join the monthly leaderboard!';
+    lbList.innerHTML = '';
+    return;
+  }
+  (async () => {
+    if (score !== null) {
+      try { await submitScore(score); } catch { /* offline — still show the board */ }
+    }
+    renderLbBoard();
+  })();
+}
+
+async function renderLbBoard() {
+  lbForm.classList.add('hidden');
+  lbRenameBtn.classList.remove('hidden');
+  lbStatus.textContent = 'Loading…';
+  try {
+    const rows = await fetchTop(lbMonthOffset);
+    const me = lbPlayerId();
+    lbList.innerHTML = '';
+    rows.slice(0, 10).forEach((r, i) => {
+      const li = document.createElement('li');
+      if (r.player_id === me) li.className = 'me';
+      const rank = document.createElement('span');
+      rank.className = 'rank';
+      rank.textContent = ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = r.name;
+      const sc = document.createElement('span');
+      sc.className = 'sc';
+      sc.textContent = `${r.score} · ${BOARD_CELLS + 1 - r.score} shots`;
+      li.append(rank, nm, sc);
+      lbList.appendChild(li);
+    });
+    const myRank = rows.findIndex((r) => r.player_id === me);
+    lbStatus.textContent = rows.length === 0
+      ? 'No scores yet this month — be the first!'
+      : myRank >= 0 ? `You're #${myRank + 1} of ${rows.length} this month` : '';
+  } catch {
+    lbStatus.textContent = 'Leaderboard unavailable (offline?)';
+  }
+}
+
+$('lbSaveBtn').addEventListener('click', async () => {
+  const name = lbNameInput.value.trim();
+  if (!name) { lbNameInput.focus(); return; }
+  const pending = Number(lbForm.dataset.pendingScore || 0);
+  lbForm.dataset.pendingScore = '';
+  try {
+    await renamePlayer(name); // saves locally + updates any existing rows
+    if (pending > 0) await submitScore(pending);
+  } catch { /* offline */ }
+  renderLbBoard();
+});
+lbNameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('lbSaveBtn').click();
+});
+lbRenameBtn.addEventListener('click', () => {
+  lbNameInput.value = lbGetName();
+  lbForm.classList.remove('hidden');
+  lbRenameBtn.classList.add('hidden');
+  lbNameInput.focus();
+});
+lbThisBtn.addEventListener('click', () => {
+  lbMonthOffset = 0;
+  lbThisBtn.classList.add('sel');
+  lbLastBtn.classList.remove('sel');
+  renderLbBoard();
+});
+lbLastBtn.addEventListener('click', () => {
+  lbMonthOffset = -1;
+  lbLastBtn.classList.add('sel');
+  lbThisBtn.classList.remove('sel');
+  renderLbBoard();
+});
 
 function celebrateChamp() {
   champBubble.textContent = pick(CHAMP_LINES);

@@ -36,6 +36,7 @@ Plain static site — no build step, no frameworks, no npm. `index.html` +
 | `js/bot.js` | the Harbormaster's hunt/target brain; only ever calls the engine's public API and sees exactly what a human attacker would |
 | `js/main.js` | UI only: drag-to-place dock, the pass-and-play blocker, battle screens, session tally |
 | `js/audio.js` | procedural WebAudio splashes, thuds and foghorns, no audio files |
+| `js/leaderboard.js` | monthly public leaderboard client (Supabase); vs-Harbormaster wins only, score = 101 − shots fired |
 
 Every push to `main` deploys to GitHub Pages via `.github/workflows/deploy.yml`.
 
