@@ -183,6 +183,21 @@
 
     <div id="resultbar" class="hidden">
       <div id="resultText"></div>
+      <!-- Monthly leaderboard — vs-Harbormaster games only; hidden when
+           lbEnabled() is false or the game was pass-and-play / online. -->
+      <div id="lb" class="hidden">
+        <div class="lb-tabs">
+          <button class="lb-chip sel" id="lbThisBtn">🏆 This Month</button>
+          <button class="lb-chip" id="lbLastBtn">Last Month</button>
+        </div>
+        <div class="lb-status" id="lbStatus"></div>
+        <ol id="lbList"></ol>
+        <div class="lb-form hidden" id="lbForm">
+          <input id="lbNameInput" maxlength="20" placeholder="Your name" autocomplete="off" />
+          <button class="lb-chip" id="lbSaveBtn">Save</button>
+        </div>
+        <button class="lb-chip lb-rename" id="lbRenameBtn">✏️ Change name</button>
+      </div>
       <div id="resultBtns">
         <button id="rematchBtn" class="big-btn">↻&nbsp; REMATCH</button>
       </div>
